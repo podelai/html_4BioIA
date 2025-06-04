@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simulateur de Microscope Électronique</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif; /* Police Inter */
+        }
+        #microscopeCanvas {
+            transform-origin: center center; /* Crucial pour que le scale se fasse depuis le centre */
+            /* image-rendering: pixelated; /* Moins pertinent pour une image photographique, peut être enlevé */
+        }
+        /* Style pour les sliders */
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #4a5568; /* bg-gray-700 */
+            border-radius: 5px;
+            outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #cbd5e0; /* bg-gray-400 */
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #2d3748; /* bg-gray-800 */
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #cbd5e0; /* bg-gray-400 */
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid #2d3748; /* bg-gray-800 */
+        }
+    </style>
+</head>
+<body class="bg-gray-900 flex flex-col items-center justify-center min-h-screen p-4 text-gray-200">
+
+    <h1 class="text-3xl font-bold mb-6 text-center">Simulateur de Microscope Électronique</h1>
+
+    <!-- Viewport for the microscope image -->
+    <div id="viewport" class="w-full max-w-md md:max-w-lg h-80 md:h-96 bg-gray-800 flex justify-center items-center overflow-hidden rounded-xl shadow-2xl border-2 border-gray-700 mb-6">
+        <canvas id="microscopeCanvas" width="300" height="300"></canvas>
+    </div>
+
+    <!-- Controls Panel -->
+    <div class="controls p-5 bg-gray-800 rounded-xl shadow-xl w-full max-w-md md:max-w-lg border-2 border-gray-700">
+        <!-- Magnification -->
+        <div class="mb-4">
+            <label for="magnification" class="block mb-1 text-sm font-medium">Grossissement: <span id="magnificationValue" class="font-semibold">1.0</span>x</label>
+            <input type="range" id="magnification" min="1" max="5" value="1" step="0.1" class="w-full cursor-pointer">
+        </div>
+
+        <!-- Focus -->
+        <div class="mb-4">
+            <label for="focus" class="block mb-1 text-sm font-medium">Focus: <span id="focusValue" class="font-semibold">25</span></label>
+            <input type="range" id="focus" min="0" max="100" value="25" step="1" class="w-full cursor-pointer">
+        </div>
+
+        <!-- Wobble -->
+        <div class="mb-4">
+            <button id="wobbleToggle" class="w-full p-2.5 rounded-lg text-sm font-semibold transition-colors duration-150 ease-in-out bg-red-600 hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400 focus:ring-opacity-75">
+                Wobble: OFF
+            </button>
+        </div>
+
+        <!-- Astigmatism X -->
+        <div class="mb-4">
+            <label for="astigmatismX" class="block mb-1 text-sm font-medium">Astigmatisme X: <span id="astigmatismXValue" class="font-semibold">0</span></label>
+            <input type="range" id="astigmatismX" min="-50" max="50" value="0" step="1" class="w-full cursor-pointer">
+        </div>
+
+        <!-- Astigmatism Y -->
+        <div>
+            <label for="astigmatismY" class="block mb-1 text-sm font-medium">Astigmatisme Y: <span id="astigmatismYValue" class="font-semibold">0</span></label>
+            <input type="range" id="astigmatismY" min="-50" max="50" value="0" step="1" class="w-full cursor-pointer">
+        </div>
+    </div>
+
+    <footer class="text-center mt-8 text-gray-500 text-sm">
+        <p>Ajustez les paramètres pour simuler l'acquisition d'une image.</p>
+        <p>Le "Wobble" aide à trouver le focus optimal : activez-le et ajustez le focus pour minimiser l'oscillation de l'image.</p>
+    </footer>
+
+<script>
+    // State variables
+    let magnification = 1;
+    let focus = 25; // 0-100, optimal 50
+    let astigmatismX = 0; // -50 to 50, optimal 0
+    let astigmatismY = 0; // -50 to 50, optimal 0
+    let wobbleActive = false;
+    let wobbleAngle = 0; // For animating wobble
+
+    // DOM Elements
+    const canvas = document.getElementById('microscopeCanvas');
+    const ctx = canvas.getContext('2d');
+
+    const magnificationSlider = document.getElementById('magnification');
+    const focusSlider = document.getElementById('focus');
+    const astigmatismXSlider = document.getElementById('astigmatismX');
+    const astigmatismYSlider = document.getElementById('astigmatismY');
+    const wobbleToggleButton = document.getElementById('wobbleToggle');
+
+    const magnificationValueDisplay = document.getElementById('magnificationValue');
+    const focusValueDisplay = document.getElementById('focusValue');
+    const astigmatismXValueDisplay = document.getElementById('astigmatismXValue');
+    const astigmatismYValueDisplay = document.getElementById('astigmatismYValue');
+
+    /**
+     * Draws fallback shapes if the main image fails to load.
+     */
+    function drawFallbackShapes() {
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+        const centerX = canvasWidth / 2;
+        const centerY = canvasHeight / 2;
+
+        // Clear canvas (it might have red background from error) and draw white
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+        ctx.fillStyle = '#333'; // Dark gray for particles
+
+        // Central large particle
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, 12, 0, 2 * Math.PI);
+        ctx.fill();
+
+        // Smaller particles
+        const numParticles = 4;
+        const radius = 40;
+        for (let i = 0; i < numParticles; i++) {
+            const angle = (i / numParticles) * 2 * Math.PI;
+            const x = centerX + radius * Math.cos(angle);
+            const y = centerY + radius * Math.sin(angle);
+            ctx.beginPath();
+            ctx.arc(x, y, 5, 0, 2 * Math.PI);
+            ctx.fill();
+        }
+    }
+
+    /**
+     * Loads and draws the microscope image (external or fallback) onto the canvas.
+     * This function is called once at the beginning.
+     */
+    function loadAndDrawMicroscopeImage() {
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+
+        // Clear canvas and draw white background initially
+        ctx.fillStyle = 'white';
+        ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+        const imageUrl = 'https://uni-tuebingen.de/fileadmin/Uni_Tuebingen/Fakultaeten/MatNat/Fachbereiche/Biologie/Institute/InstEvoOeko/EvoInvertebraten/Lamina.png';
+        const img = new Image();
+        // Setting crossOrigin to "Anonymous" can help if the server supports CORS,
+        // though for simply drawing and applying CSS filters, it's often not strictly needed.
+        // If it were for getImageData or toDataURL, it would be crucial.
+        img.crossOrigin = "Anonymous";
+
+        img.onload = function() {
+            // Draw the image to fit the canvas dimensions
+            ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+            // Ensure display is updated with initial settings after image is loaded
+            updateDisplay();
+        };
+
+        img.onerror = function() {
+            console.error("Error loading image:", imageUrl);
+            // Fallback if the image fails to load
+            ctx.fillStyle = 'darkred'; // Darker red for error background
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            ctx.fillStyle = 'white';
+            ctx.textAlign = 'center';
+            ctx.font = '14px Inter'; // Slightly smaller font for error message
+            ctx.fillText('Image could not be loaded.', canvasWidth / 2, canvasHeight / 2 - 15);
+            ctx.fillText('Using fallback shapes.', canvasWidth / 2, canvasHeight / 2 + 5);
+            
+            // Draw some basic fallback shapes
+            drawFallbackShapes(); // This will clear and redraw with white background + shapes
+            updateDisplay(); // Update display with fallback content
+        };
+
+        img.src = imageUrl;
+    }
+
+
+    /**
+     * Updates the canvas display based on current settings (magnification, focus, astigmatism, wobble).
+     * This function is called whenever a setting changes or during wobble animation.
+     */
+    function updateDisplay() {
+        // 1. Calculate blur amount from focus
+        const blurAmount = Math.abs(focus - 50) / 8.33;
+        canvas.style.filter = `blur(${blurAmount}px)`;
+
+        // 2. Calculate astigmatism scaling factors
+        const astigScaleX = 1 + astigmatismX / 100;
+        const astigScaleY = 1 + astigmatismY / 100;
+
+        // 3. Calculate wobble translation
+        let currentWobbleX = 0;
+        let currentWobbleY = 0;
+
+        if (wobbleActive) {
+            const focusError = Math.abs(focus - 50);
+            const minWobbleAmp = 0.5;
+            const maxWobbleAmp = 10;
+            const wobbleAmplitude = minWobbleAmp + (maxWobbleAmp - minWobbleAmp) * (focusError / 50);
+            currentWobbleX = Math.sin(wobbleAngle) * wobbleAmplitude;
+            currentWobbleY = Math.cos(wobbleAngle) * wobbleAmplitude;
+        }
+
+        const displayWobbleX = currentWobbleX / magnification;
+        const displayWobbleY = currentWobbleY / magnification;
+
+        // 4. Apply all transformations
+        canvas.style.transform = `translate(${displayWobbleX}px, ${displayWobbleY}px) scale(${magnification * astigScaleX}, ${magnification * astigScaleY})`;
+
+        // 5. Update value displays in the UI
+        magnificationValueDisplay.textContent = magnification.toFixed(1);
+        focusValueDisplay.textContent = focus;
+        astigmatismXValueDisplay.textContent = astigmatismX;
+        astigmatismYValueDisplay.textContent = astigmatismY;
+    }
+
+    /**
+     * Animation loop for wobble effect.
+     * Runs continuously using requestAnimationFrame.
+     */
+    function wobbleLoop() {
+        if (wobbleActive) {
+            wobbleAngle += 0.15;
+            if (wobbleAngle > Math.PI * 2) {
+                wobbleAngle -= Math.PI * 2;
+            }
+            updateDisplay();
+        }
+        requestAnimationFrame(wobbleLoop);
+    }
+
+    // Event Listeners for controls
+    magnificationSlider.addEventListener('input', (e) => {
+        magnification = parseFloat(e.target.value);
+        updateDisplay();
+    });
+
+    focusSlider.addEventListener('input', (e) => {
+        focus = parseInt(e.target.value);
+        updateDisplay();
+    });
+
+    astigmatismXSlider.addEventListener('input', (e) => {
+        astigmatismX = parseInt(e.target.value);
+        updateDisplay();
+    });
+
+    astigmatismYSlider.addEventListener('input', (e) => {
+        astigmatismY = parseInt(e.target.value);
+        updateDisplay();
+    });
+
+    wobbleToggleButton.addEventListener('click', () => {
+        wobbleActive = !wobbleActive;
+        wobbleToggleButton.textContent = wobbleActive ? 'Wobble: ON' : 'Wobble: OFF';
+        if (wobbleActive) {
+            wobbleToggleButton.classList.remove('bg-red-600', 'hover:bg-red-700', 'focus:ring-red-400');
+            wobbleToggleButton.classList.add('bg-green-500', 'hover:bg-green-600', 'focus:ring-green-300');
+        } else {
+            wobbleToggleButton.classList.remove('bg-green-500', 'hover:bg-green-600', 'focus:ring-green-300');
+            wobbleToggleButton.classList.add('bg-red-600', 'hover:bg-red-700', 'focus:ring-red-400');
+            wobbleAngle = 0;
+            updateDisplay(); // Update display to remove wobble translation immediately
+        }
+    });
+
+    // Initial setup
+    loadAndDrawMicroscopeImage(); // Load the external image (or fallback) and draw it
+    // updateDisplay(); // Called within loadAndDrawMicroscopeImage's onload/onerror now
+    requestAnimationFrame(wobbleLoop); // Start the animation loop
+
+</script>
+
+</body>
+</html>
