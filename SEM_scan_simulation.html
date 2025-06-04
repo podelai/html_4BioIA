@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SEM Acquisition Simulator</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for the SEM simulator */
+        body {
+            font-family: "Inter", sans-serif;
+            background-color: #1a202c; /* Dark background for SEM feel */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh; /* Ensure full viewport height */
+            margin: 0;
+            overflow-y: auto; /* Allow vertical scrolling if content is too tall */
+            padding: 1rem; /* Add some padding around the content */
+            box-sizing: border-box; /* Include padding in element's total width and height */
+        }
+        .container {
+            background-color: #2d3748; /* Slightly lighter dark background for the container */
+            padding: 2rem;
+            border-radius: 0.75rem; /* rounded-xl */
+            box-shadow: 0 10px 15px rgba(0, 0, 0, 0.5); /* Stronger shadow */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 1.5rem;
+            max-width: 90vw; /* Responsive width */
+            width: 700px; /* Adjusted max width for better fit */
+        }
+        canvas {
+            border: 2px solid #4a5568; /* Border for the canvas */
+            border-radius: 0.5rem; /* rounded-lg */
+            background-color: #000; /* Black background for canvas */
+            image-rendering: pixelated; /* For a more 'raw' pixel look */
+            max-width: 100%; /* Ensure canvas is responsive */
+            height: auto; /* Maintain aspect ratio */
+        }
+        input[type="range"] {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 8px;
+            background: #4a5568;
+            outline: none;
+            opacity: 0.7;
+            transition: opacity .2s;
+            border-radius: 4px;
+        }
+        input[type="range"]:hover {
+            opacity: 1;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px;
+            height: 20px;
+            background: #63b3ed; /* Blue thumb */
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(99, 179, 237, 0.7);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #63b3ed;
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 0 5px rgba(99, 179, 237, 0.7);
+        }
+        .control-buttons button {
+            padding: 0.75rem 1.5rem;
+            border-radius: 0.5rem;
+            font-weight: bold;
+            transition: background-color 0.2s, transform 0.1s;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+        .control-buttons button:hover {
+            transform: translateY(-2px);
+        }
+        .control-buttons button:active {
+            transform: translateY(0);
+        }
+        .control-buttons .start-button {
+            background-color: #48bb78; /* Green */
+            color: white;
+        }
+        .control-buttons .start-button:hover {
+            background-color: #38a169;
+        }
+        .control-buttons .stop-button {
+            background-color: #e53e3e; /* Red */
+            color: white;
+        }
+        .control-buttons .stop-button:hover {
+            background-color: #c53030;
+        }
+    </style>
+</head>
+<body class="bg-gray-900 text-gray-100 flex items-center justify-center min-h-screen">
+    <div class="container">
+        <h1 class="text-3xl font-bold text-blue-300 mb-4">SEM Acquisition Simulator</h1>
+
+        <!-- Canvas for SEM simulation -->
+        <canvas id="semCanvas" width="600" height="450"></canvas>
+
+        <!-- Slider for Dwell Time/Scan Speed -->
+        <div class="w-full max-w-lg flex flex-col items-center gap-2">
+            <label for="dwellTimeSlider" class="text-lg text-gray-300">Dwell Time / Scan Speed:</label>
+            <input type="range" id="dwellTimeSlider" min="1" max="100" value="50" class="w-full">
+            <span id="dwellTimeValue" class="text-blue-400 text-sm">Value: 50</span>
+        </div>
+
+        <!-- Control Buttons -->
+        <div class="control-buttons w-full max-w-lg flex justify-center gap-4 mt-4">
+            <button id="toggleScanButton" class="start-button">Start Scan</button>
+        </div>
+    </div>
+
+    <script>
+        // Get references to DOM elements
+        const semCanvas = document.getElementById('semCanvas');
+        const ctx = semCanvas.getContext('2d');
+        const dwellTimeSlider = document.getElementById('dwellTimeSlider');
+        const dwellTimeValueSpan = document.getElementById('dwellTimeValue');
+        const toggleScanButton = document.getElementById('toggleScanButton');
+
+        // Original image URL
+        const imageUrl = 'https://uni-tuebingen.de/fileadmin/Uni_Tuebingen/Fakultaeten/MatNat/Fachbereiche/Biologie/Institute/InstEvoOeko/EvoInvertebraten/Lamina.png';
+        let originalImage = new Image();
+        let imageData = null; // To store grayscale pixel data
+
+        let currentScanLine = 0;
+        let dwellTime = parseInt(dwellTimeSlider.value);
+        let animationFrameId; // To store the requestAnimationFrame ID
+        let isScanning = false; // State to track if the animation is running
+
+        /**
+         * Function to load the image and prepare the canvas.
+         * Sets canvas dimensions and converts the image to grayscale.
+         */
+        originalImage.onload = () => {
+            // Set canvas dimensions to match the image, but cap at a max for display
+            const maxWidth = 600; // Max width for display
+            const maxHeight = 450; // Max height for display
+
+            let imgWidth = originalImage.width;
+            let imgHeight = originalImage.height;
+
+            // Scale down if image is larger than max dimensions
+            if (imgWidth > maxWidth || imgHeight > maxHeight) {
+                const aspectRatio = imgWidth / imgHeight;
+                if (imgWidth / maxWidth > imgHeight / maxHeight) {
+                    imgWidth = maxWidth;
+                    imgHeight = maxWidth / aspectRatio;
+                } else {
+                    imgHeight = maxHeight;
+                    imgWidth = maxHeight * aspectRatio;
+                }
+            }
+
+            semCanvas.width = imgWidth;
+            semCanvas.height = imgHeight;
+
+            // Create an offscreen canvas to process the image (grayscale conversion)
+            const offscreenCanvas = document.createElement('canvas');
+            const offscreenCtx = offscreenCanvas.getContext('2d');
+            offscreenCanvas.width = originalImage.width; // Use original dimensions for offscreen
+            offscreenCanvas.height = originalImage.height;
+
+            // Draw the original image onto the offscreen canvas
+            offscreenCtx.drawImage(originalImage, 0, 0);
+
+            // Get pixel data from the offscreen canvas
+            const imgData = offscreenCtx.getImageData(0, 0, offscreenCanvas.width, offscreenCanvas.height);
+            const pixels = imgData.data;
+
+            // Convert to grayscale
+            for (let i = 0; i < pixels.length; i += 4) {
+                const r = pixels[i];
+                const g = pixels[i + 1];
+                const b = pixels[i + 2];
+                // Simple average for grayscale conversion
+                const gray = (r + g + b) / 3;
+                pixels[i] = gray;     // Red
+                pixels[i + 1] = gray; // Green
+                pixels[i + 2] = gray; // Blue
+                // Alpha (pixels[i+3]) remains unchanged
+            }
+            imageData = imgData; // Store the grayscale image data
+            
+            // Draw the initial full grayscale image on the visible canvas
+            // This ensures the image is visible even when not scanning
+            ctx.putImageData(imageData, 0, 0, 0, 0, semCanvas.width, semCanvas.height);
+        };
+
+        // Handle image loading errors
+        originalImage.onerror = () => {
+            console.error('Failed to load image:', imageUrl);
+            ctx.font = '20px Arial';
+            ctx.fillStyle = 'red';
+            ctx.fillText('Error loading image.', 10, 50);
+        };
+
+        // Set the crossOrigin property BEFORE setting the src to allow CORS
+        originalImage.crossOrigin = 'Anonymous';
+        // Set the image source to start loading
+        originalImage.src = imageUrl;
+
+        /**
+         * The main animation loop for the SEM scanning effect.
+         * It draws a certain number of lines per frame based on the dwell time.
+         */
+        function animateScan() {
+            if (!isScanning || !imageData) {
+                // If not scanning or image data not ready, stop animation
+                return;
+            }
+
+            // Clear the canvas for the next frame
+            ctx.clearRect(0, 0, semCanvas.width, semCanvas.height);
+
+            // Calculate lines to draw based on dwell time (inverse relationship)
+            // Lower dwellTime (slider value) means more lines per frame (faster scan)
+            // Higher dwellTime means fewer lines per frame (slower scan)
+            const linesPerFrame = Math.max(1, Math.floor(100 / dwellTime)); // At least 1 line per frame
+
+            // Create a new ImageData object for the current scan portion
+            // We're drawing from the original (full resolution) imageData
+            // and scaling it down to the visible canvas size.
+            const sourceWidth = imageData.width;
+            const sourceHeight = imageData.height;
+            const targetWidth = semCanvas.width;
+            const targetHeight = semCanvas.height;
+
+            // Calculate the current line in the original image's coordinate system
+            const sourceCurrentScanLine = Math.floor(currentScanLine * (sourceHeight / targetHeight));
+            const sourceLinesToDraw = Math.floor(linesPerFrame * (sourceHeight / targetHeight));
+
+            // Create a temporary canvas to draw the scaled portion
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCanvas.width = targetWidth;
+            tempCanvas.height = Math.min(targetHeight, currentScanLine + linesPerFrame); // Only as tall as currently scanned
+
+            // Copy pixel data from the original image data, scaling it down
+            // This is a simplified scaling for demonstration. For high quality,
+            // one might use drawImage with scaling or more complex pixel manipulation.
+            for (let y = 0; y < tempCanvas.height; y++) {
+                const originalY = Math.floor(y * (sourceHeight / targetHeight));
+                if (originalY >= sourceHeight) continue;
+
+                for (let x = 0; x < tempCanvas.width; x++) {
+                    const originalX = Math.floor(x * (sourceWidth / targetWidth));
+                    const originalIndex = (originalY * sourceWidth + originalX) * 4;
+                    const tempIndex = (y * tempCanvas.width + x) * 4;
+
+                    tempCtx.fillStyle = `rgb(${imageData.data[originalIndex]}, ${imageData.data[originalIndex + 1]}, ${imageData.data[originalIndex + 2]})`;
+                    tempCtx.fillRect(x, y, 1, 1);
+                }
+            }
+
+            // Put the scaled and scanned image data onto the main canvas
+            ctx.drawImage(tempCanvas, 0, 0);
+
+            // Draw a horizontal line to visualize the scanning beam
+            ctx.strokeStyle = 'rgba(0, 255, 255, 0.7)'; // Cyan line
+            ctx.lineWidth = 1;
+            ctx.beginPath();
+            ctx.moveTo(0, currentScanLine);
+            ctx.lineTo(semCanvas.width, currentScanLine);
+            ctx.stroke();
+
+            // Update the current scan line for the next frame
+            currentScanLine += linesPerFrame;
+
+            // If the scan reaches the end of the image, reset to start from top
+            if (currentScanLine >= semCanvas.height) {
+                currentScanLine = 0;
+            }
+
+            // Request the next animation frame
+            animationFrameId = requestAnimationFrame(animateScan);
+        }
+
+        /**
+         * Toggles the SEM scanning animation on or off.
+         */
+        function toggleScanAnimation() {
+            isScanning = !isScanning; // Toggle the state
+
+            if (isScanning) {
+                toggleScanButton.textContent = 'Pause Scan';
+                toggleScanButton.classList.remove('start-button');
+                toggleScanButton.classList.add('stop-button');
+                currentScanLine = 0; // Reset scan line when starting
+                animationFrameId = requestAnimationFrame(animateScan);
+            } else {
+                toggleScanButton.textContent = 'Start Scan';
+                toggleScanButton.classList.remove('stop-button');
+                toggleScanButton.classList.add('start-button');
+                cancelAnimationFrame(animationFrameId);
+            }
+        }
+
+        // Event listener for the dwell time slider
+        dwellTimeSlider.addEventListener('input', (event) => {
+            dwellTime = parseInt(event.target.value);
+            dwellTimeValueSpan.textContent = `Value: ${dwellTime}`;
+            // If scanning, restart animation to apply new speed immediately
+            if (isScanning) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = requestAnimationFrame(animateScan);
+            }
+        });
+
+        // Event listener for the start/stop button
+        toggleScanButton.addEventListener('click', toggleScanAnimation);
+
+        // Initial update of the dwell time value display
+        dwellTimeValueSpan.textContent = `Value: ${dwellTimeSlider.value}`;
+
+    </script>
+</body>
+</html>
