@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Acquisition Duration Simulation</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom font for better aesthetics */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* Light blue-gray background */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh; /* Ensure it takes full viewport height */
+            margin: 0;
+            padding: 20px; /* Add some padding around the content */
+            box-sizing: border-box; /* Include padding in element's total width and height */
+        }
+
+        /* Styling for range input (sliders) for better visual appeal */
+        input[type="range"] {
+            -webkit-appearance: none; /* Remove default styling */
+            width: 100%;
+            height: 8px; /* Thinner track */
+            background: #d1d5db; /* Light gray track */
+            outline: none;
+            opacity: 0.7;
+            -webkit-transition: .2s;
+            transition: opacity .2s;
+            border-radius: 4px; /* Rounded track */
+        }
+
+        input[type="range"]:hover {
+            opacity: 1;
+        }
+
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 20px; /* Larger thumb */
+            height: 20px; /* Larger thumb */
+            background: #3b82f6; /* Blue thumb */
+            cursor: pointer;
+            border-radius: 50%; /* Circular thumb */
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Subtle shadow */
+            border: 2px solid #ffffff; /* White border for contrast */
+        }
+
+        input[type="range"]::-moz-range-thumb {
+            width: 20px;
+            height: 20px;
+            background: #3b82f6;
+            cursor: pointer;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+            border: 2px solid #ffffff;
+        }
+    </style>
+</head>
+<body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
+    <div class="bg-white p-8 rounded-xl shadow-2xl w-full max-w-md border border-blue-200">
+        <h1 class="text-3xl font-extrabold text-center text-blue-800 mb-8">Acquisition Duration Simulation</h1>
+
+        <div class="mb-6">
+            <label for="field_size" class="block text-lg font-semibold text-gray-700 mb-2">
+                Field Size: <span id="field_size_value" class="text-blue-600 font-bold">25</span> µm
+            </label>
+            <input type="range" id="field_size" min="1" max="50" value="20" step="1"
+                   class="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer">
+        </div>
+
+        <div class="mb-6">
+            <label for="slice_number" class="block text-lg font-semibold text-gray-700 mb-2">
+                Slice Number: <span id="slice_number_value" class="text-blue-600 font-bold">500</span>
+            </label>
+            <input type="range" id="slice_number" min="10" max="1000" value="300" step="10"
+                   class="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer">
+        </div>
+
+        <div class="mb-6">
+            <label for="pixel_size" class="block text-lg font-semibold text-gray-700 mb-2">
+                Pixel Size: <span id="pixel_size_value" class="text-blue-600 font-bold">10</span> nm
+            </label>
+            <input type="range" id="pixel_size" min="1" max="20" value="5" step="1"
+                   class="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer">
+        </div>
+
+        <div class="mb-8">
+            <label for="dwell_time" class="block text-lg font-semibold text-gray-700 mb-2">
+                Dwell Time: <span id="dwell_time_value" class="text-blue-600 font-bold">3.2</span> µs
+            </label>
+            <input type="range" id="dwell_time" min="0" max="5" value="2" step="1"
+                   class="w-full h-2 bg-blue-100 rounded-lg appearance-none cursor-pointer">
+            <p class="text-sm text-gray-500 mt-1">Available values: 0.4, 0.8, 1.6, 3.2, 6.4, 12.8 µs</p>
+        </div>
+
+        <div class="text-center bg-blue-50 p-4 rounded-lg border border-blue-300">
+            <p class="text-xl font-bold text-blue-700">
+                Acquisition Duration: <span id="result" class="text-blue-900 text-3xl">0.00</span> hours
+            </p>
+        </div>
+    </div>
+
+    <script>
+        // Get references to all necessary DOM elements
+        const fieldSizeSlider = document.getElementById('field_size');
+        const sliceNumberSlider = document.getElementById('slice_number');
+        const pixelSizeSlider = document.getElementById('pixel_size');
+        const dwellTimeSlider = document.getElementById('dwell_time');
+
+        const fieldSizeValueSpan = document.getElementById('field_size_value');
+        const sliceNumberValueSpan = document.getElementById('slice_number_value');
+        const pixelSizeValueSpan = document.getElementById('pixel_size_value');
+        const dwellTimeValueSpan = document.getElementById('dwell_time_value');
+        const resultSpan = document.getElementById('result');
+
+        // Define the discrete dwell time values as requested (increment by double)
+        const dwellTimeValues = [0.4, 0.8, 1.6, 3.2, 6.4, 12.8];
+
+        /**
+         * Calculates the acquisition duration based on the given parameters.
+         * @param {number} field_size - The field size in micrometers.
+         * @param {number} pixel_size - The pixel size in nanometers.
+         * @param {number} dwell_time - The dwell time in microseconds.
+         * @param {number} slice_number - The number of slices.
+         * @returns {number} The acquisition duration in hours.
+         */
+        function calculateDuration(field_size, pixel_size, dwell_time, slice_number) {
+            // The equation provided:
+            // ( (field_size*1000/pixel_size)² * dwell_time * slice_number + dwell_time * 50000000 ) / 3600000000
+            // Note: field_size is in micrometers, pixel_size in nanometers.
+            // field_size * 1000 converts micrometers to nanometers for consistency with pixel_size.
+            const term1 = Math.pow((field_size * 1000) / pixel_size, 2);
+            const term2 = term1 * dwell_time * slice_number;
+            const term3 = dwell_time * 6000000000;
+            const numerator = term2 + term3;
+            const denominator = 3600000000; // Constant for conversion to hours (microseconds to hours)
+
+            return numerator / denominator;
+        }
+
+        /**
+         * Updates the displayed values and calculates the new duration.
+         */
+        function updateDuration() {
+            // Get values from sliders
+            const fieldSize = parseFloat(fieldSizeSlider.value);
+            const sliceNumber = parseInt(sliceNumberSlider.value);
+            const pixelSize = parseFloat(pixelSizeSlider.value);
+            // Map the dwell time slider's index to the actual dwell time value
+            const dwellTimeIndex = parseInt(dwellTimeSlider.value);
+            const dwellTime = dwellTimeValues[dwellTimeIndex];
+
+            // Update the display spans
+            fieldSizeValueSpan.textContent = fieldSize;
+            sliceNumberValueSpan.textContent = sliceNumber;
+            pixelSizeValueSpan.textContent = pixelSize;
+            dwellTimeValueSpan.textContent = dwellTime.toFixed(1); // Display with one decimal place
+
+            // Calculate the duration
+            const duration = calculateDuration(fieldSize, pixelSize, dwellTime, sliceNumber);
+
+            // Display the result, formatted to 2 decimal places
+            resultSpan.textContent = duration.toFixed(0);
+        }
+
+        // Add event listeners to all sliders to trigger recalculation on input change
+        fieldSizeSlider.addEventListener('input', updateDuration);
+        sliceNumberSlider.addEventListener('input', updateDuration);
+        pixelSizeSlider.addEventListener('input', updateDuration);
+        dwellTimeSlider.addEventListener('input', updateDuration);
+
+        // Initial calculation when the page loads
+        window.onload = updateDuration;
+    </script>
+</body>
+</html>
