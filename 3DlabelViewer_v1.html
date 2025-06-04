@@ -1,0 +1,587 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D label Viewer</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/utif@3.1.0/UTIF.min.js"></script>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.min.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.128.0/examples/jsm/"
+            }
+        }
+    </script>
+    <style>
+        body { font-family: 'Inter', sans-serif; margin: 0; background-color: #111827; /* bg-gray-900 */ color: #f3f4f6; display: flex; flex-direction: column; height: 100vh; /* Fallback */ height: 100dvh; }
+        /* Removed #appHeader styles */
+        #viewerContainer { flex-grow: 1; display: flex; overflow: hidden; }
+        #guiContainer {
+            width: 280px; /* Slightly narrower GUI */
+            flex-shrink: 0;
+            background-color: rgba(31, 41, 55, 0.95); /* bg-gray-800 with opacity */
+            padding: 1rem;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            color: #e5e7eb; /* text-gray-200 */
+            overflow-y: auto;
+            height: 100%;
+        }
+        #guiTitle { /* New style for title in GUI */
+            font-size: 1.5rem; /* Large title */
+            font-weight: 700;
+            color: #e5e7eb; /* text-gray-200 */
+            margin-bottom: 1rem;
+            padding-bottom: 0.75rem;
+            border-bottom: 1px solid #4b5563; /* border-gray-600 */
+        }
+        #canvasHost { flex-grow: 1; position: relative; height: 100%;}
+        canvas { display: block; width: 100%; height: 100%; }
+        .gui-section-title { font-size: 1.125rem; font-weight: 600; margin-bottom: 0.75rem; border-bottom: 1px solid #4b5563; padding-bottom: 0.5rem; }
+        .control-group { margin-bottom: 1rem; }
+        .control-group label, .label-item-header { display: block; margin-bottom: 0.35rem; font-size: 0.875rem; color: #d1d5db; }
+        .label-item-header { font-weight: 600; /* Make ID more prominent */ }
+
+        input[type="file"], input[type="text"], input[type="range"] { /* Removed input[type="color"] from this rule */
+            font-size: 0.875rem;
+            background-color: #374151; /* bg-gray-700 */
+            border: 1px solid #4b5563; /* border-gray-600 */
+            border-radius: 0.375rem;
+            padding: 0.5rem;
+            color: #d1d5db; /* text-gray-300 */
+            width: 100%;
+            box-sizing: border-box;
+        }
+        input[type="color"] { /* Specific styling for smaller color picker */
+            -webkit-appearance: none;
+            -moz-appearance: none;
+            appearance: none;
+            width: 32px; /* Smaller width */
+            height: 22px; /* Smaller height */
+            background-color: transparent; /* Remove default bg */
+            border: 1px solid #4b5563; /* border-gray-600 */
+            border-radius: 0.25rem; /* Slightly smaller radius */
+            padding: 0; /* Remove padding */
+            cursor: pointer;
+            vertical-align: middle; /* Align with text */
+        }
+        input[type="color"]::-webkit-color-swatch-wrapper { padding: 0; }
+        input[type="color"]::-webkit-color-swatch { border: none; border-radius: 0.125rem; }
+        input[type="color"]::-moz-color-swatch { border: none; border-radius: 0.125rem; }
+
+
+        input[type="file"] { cursor: pointer; }
+        input[type="file"]::file-selector-button {
+            background-color: #4f46e5; /* bg-indigo-600 */
+            color: white;
+            border: none;
+            padding: 0.4rem 0.8rem;
+            border-radius: 0.25rem;
+            margin-right: 0.75rem;
+            cursor: pointer;
+        }
+        .label-control-item { border: 1px solid #4b5563; border-radius: 0.375rem; padding: 0.75rem; margin-bottom: 0.75rem; background-color: #2d3748; }
+        
+        .label-controls-row { /* Flex container for label ID, color, and opacity slider */
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 0.5rem;
+        }
+        .label-id-color-group { /* Group for Label ID and Color Picker */
+            display: flex;
+            align-items: center;
+        }
+         .label-item-header { /* Modified for inline display */
+            margin-right: 0.5rem; /* Space between ID and color picker */
+            margin-bottom: 0; /* Remove bottom margin */
+         }
+
+        .slider-container { display: flex; align-items: center; flex-grow: 1; /* Allow slider to take space */ margin-left: 0.75rem; }
+        .slider-label-text { min-width: 70px; font-size: 0.8rem; display: none; /* Hide "Opacity:" text if redundant */ }
+        .slider { flex-grow: 1; margin: 0 0.5rem; accent-color: #4f46e5; }
+        .slider-value { min-width: 30px; text-align: right; font-size: 0.75rem; }
+         #loadingIndicator {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background-color: rgba(0,0,0,0.8); color: white; padding: 25px; border-radius: 10px;
+            font-size: 1.25em; z-index: 1000; display: none;
+        }
+        #errorMessage {
+            position: absolute; bottom: 15px; left: 50%; transform: translateX(-50%);
+            background-color: #ef4444; /* bg-red-500 */ color: white; padding: 12px 22px;
+            border-radius: 8px; font-size: 1em; z-index: 1000; display: none; text-align: center;
+        }
+        #credits {
+            position: absolute;
+            bottom: 5px;
+            right: 10px;
+            font-size: 0.7rem;
+            color: #9ca3af; /* text-gray-400 */
+            z-index: 10;
+        }
+    </style>
+</head>
+<body>
+    <div id="viewerContainer">
+        <div id="guiContainer">
+            <div id="guiTitle">3D label Viewer</div>
+            <div class="control-group">
+                <label for="imageUpload">Image Stack (PNG, JPG, TIF):</label>
+                <input type="file" id="imageUpload" multiple accept="image/png, image/jpeg, image/tiff, image/tif">
+            </div>
+
+            <div class="gui-section-title">Label Controls</div>
+            <div id="labelControlsContainer">
+                <p class="text-sm text-gray-400">Load images to manage labels.</p>
+            </div>
+        </div>
+
+        <div id="canvasHost">
+            <canvas id="raymarchCanvas"></canvas>
+            <div id="loadingIndicator">Loading & Processing Images...</div>
+            <div id="errorMessage"></div>
+            <div id="credits">Credit: C.Benedetti, L.Daunas</div>
+        </div>
+    </div>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // --- Constants and Configuration ---
+        const MAX_LABELS = 32;
+        const RAYMARCH_STEPS = 128;
+
+        // --- Global Variables ---
+        let scene, camera, renderer, controls;
+        let volumeMaterial, volumeMesh;
+        let volumeDimensions = new THREE.Vector3(1, 1, 1);
+        let labelSettings = {}; 
+        let objectOpacitiesUniform = new Float32Array(MAX_LABELS).fill(1.0);
+        let labelColorsUniform = new Float32Array(MAX_LABELS * 3);
+
+        const canvas = document.getElementById('raymarchCanvas');
+        const canvasHost = document.getElementById('canvasHost');
+        const imageUpload = document.getElementById('imageUpload');
+        const labelControlsContainer = document.getElementById('labelControlsContainer');
+        const loadingIndicator = document.getElementById('loadingIndicator');
+        const errorMessageElement = document.getElementById('errorMessage');
+
+        // --- Initialization ---
+        function init() {
+            scene = new THREE.Scene();
+            const aspect = canvasHost.clientWidth / canvasHost.clientHeight;
+            camera = new THREE.PerspectiveCamera(75, aspect, 0.1, 1000);
+            camera.position.set(1, 1, 1);
+            camera.lookAt(0, 0, 0);
+
+            renderer = new THREE.WebGLRenderer({ canvas: canvas, antialias: true });
+            renderer.setSize(canvasHost.clientWidth, canvasHost.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.setClearColor(0x1f2937); 
+
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            setupVolumeMesh();
+            if (volumeMesh) volumeMesh.visible = false;
+
+            window.addEventListener('resize', onWindowResize);
+            imageUpload.addEventListener('change', handleImageUpload);
+            
+            initializeDefaultLabelColors();
+            updateLabelControlsGUI();
+            animate();
+        }
+        
+        function initializeDefaultLabelColors() {
+            const defaultColors = generateDefaultColors(MAX_LABELS);
+            for (let i = 0; i < MAX_LABELS; i++) {
+                if (i === 0) { // Background
+                    labelColorsUniform[i * 3] = 0;
+                    labelColorsUniform[i * 3 + 1] = 0;
+                    labelColorsUniform[i * 3 + 2] = 0;
+                } else {
+                    const color = defaultColors[i] || new THREE.Color(0.5, 0.5, 0.5);
+                    labelColorsUniform[i * 3] = color.r;
+                    labelColorsUniform[i * 3 + 1] = color.g;
+                    labelColorsUniform[i * 3 + 2] = color.b;
+                }
+                 objectOpacitiesUniform[i] = (i === 0) ? 0.0 : 1.0;
+            }
+        }
+
+        function showError(message) {
+            errorMessageElement.textContent = message;
+            errorMessageElement.style.display = 'block';
+            console.error("Viewer Error:", message);
+            setTimeout(() => { errorMessageElement.style.display = 'none'; }, 7000);
+        }
+
+        async function handleImageUpload(event) {
+            const files = event.target.files;
+            if (files.length === 0) return;
+
+            loadingIndicator.style.display = 'block';
+            errorMessageElement.style.display = 'none';
+
+            let imageSlicesData = [];
+            let sliceWidth = -1, sliceHeight = -1;
+            let currentLabels = new Set();
+            const sortedFiles = Array.from(files).sort((a, b) => a.name.localeCompare(b.name));
+
+            try {
+                if (sortedFiles.length === 1 && (sortedFiles[0].name.toLowerCase().endsWith('.tif') || sortedFiles[0].name.toLowerCase().endsWith('.tiff'))) {
+                    const file = sortedFiles[0];
+                    const buffer = await file.arrayBuffer();
+                    const ifds = UTIF.decode(buffer);
+                    if (!ifds || ifds.length === 0 || !ifds[0].data || ifds[0].width === 0 || ifds[0].height === 0) {
+                        showError(`Failed to decode TIFF: ${file.name}. May be corrupt or unsupported.`);
+                        loadingIndicator.style.display = 'none'; return;
+                    }
+                    for (let i = 0; i < ifds.length; i++) {
+                        const ifd = ifds[i];
+                        UTIF.decodeImage(buffer, ifd);
+                        const rgba = UTIF.toRGBA8(ifd);
+                        if (sliceWidth === -1) { sliceWidth = ifd.width; sliceHeight = ifd.height; }
+                        else if (ifd.width !== sliceWidth || ifd.height !== sliceHeight) {
+                            showError(`TIFF page ${i+1} in ${file.name} has different dimensions.`);
+                            loadingIndicator.style.display = 'none'; return;
+                        }
+                        const slicePixelData = new Uint8Array(sliceWidth * sliceHeight);
+                        for (let j = 0; j < sliceWidth * sliceHeight; j++) {
+                            const label = rgba[j * 4]; 
+                            slicePixelData[j] = label;
+                            if (label > 0) currentLabels.add(label);
+                        }
+                        imageSlicesData.push(slicePixelData);
+                    }
+                } else {
+                    for (const file of sortedFiles) {
+                        let slicePixelData;
+                        if (file.name.toLowerCase().endsWith('.tif') || file.name.toLowerCase().endsWith('.tiff')) {
+                            const buffer = await file.arrayBuffer();
+                            const ifds = UTIF.decode(buffer);
+                            if (!ifds || ifds.length === 0 || !ifds[0].data || ifds[0].width === 0 || ifds[0].height === 0) {
+                                console.warn(`Skipping problematic TIFF: ${file.name}`); continue;
+                            }
+                            const ifd = ifds[0];
+                            UTIF.decodeImage(buffer, ifd);
+                            const rgba = UTIF.toRGBA8(ifd);
+                            if (sliceWidth === -1) { sliceWidth = ifd.width; sliceHeight = ifd.height; }
+                            else if (ifd.width !== sliceWidth || ifd.height !== sliceHeight) {
+                                showError(`Image ${file.name} has different dimensions.`);
+                                loadingIndicator.style.display = 'none'; return;
+                            }
+                            slicePixelData = new Uint8Array(sliceWidth * sliceHeight);
+                            for (let j = 0; j < sliceWidth * sliceHeight; j++) {
+                                slicePixelData[j] = rgba[j * 4];
+                                if (rgba[j * 4] > 0) currentLabels.add(rgba[j * 4]);
+                            }
+                        } else if (file.type.startsWith('image/')) {
+                            const bitmap = await createImageBitmap(file);
+                            if (sliceWidth === -1) { sliceWidth = bitmap.width; sliceHeight = bitmap.height; }
+                            else if (bitmap.width !== sliceWidth || bitmap.height !== sliceHeight) {
+                                showError(`Image ${file.name} has different dimensions.`);
+                                loadingIndicator.style.display = 'none'; bitmap.close(); return;
+                            }
+                            const tempCanvas = document.createElement('canvas');
+                            tempCanvas.width = sliceWidth; tempCanvas.height = sliceHeight;
+                            const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
+                            tempCtx.drawImage(bitmap, 0, 0);
+                            const imageData = tempCtx.getImageData(0, 0, sliceWidth, sliceHeight);
+                            slicePixelData = new Uint8Array(sliceWidth * sliceHeight);
+                            for (let j = 0; j < sliceWidth * sliceHeight; j++) {
+                                slicePixelData[j] = imageData.data[j * 4];
+                                if (imageData.data[j * 4] > 0) currentLabels.add(imageData.data[j * 4]);
+                            }
+                            bitmap.close();
+                        } else { console.warn(`Skipping unsupported file: ${file.name}`); continue; }
+                        if(slicePixelData) imageSlicesData.push(slicePixelData);
+                    }
+                }
+
+                if (imageSlicesData.length === 0 || sliceWidth === -1) {
+                     showError("No valid image slices processed. Check formats/consistency.");
+                     loadingIndicator.style.display = 'none'; return;
+                }
+
+                volumeDimensions.set(sliceWidth, sliceHeight, imageSlicesData.length);
+                const rawVolumeData = new Uint8Array(sliceWidth * sliceHeight * imageSlicesData.length);
+                for (let i = 0; i < imageSlicesData.length; i++) {
+                    rawVolumeData.set(imageSlicesData[i], i * sliceWidth * sliceHeight);
+                }
+                
+                const newVolumeTexture = new THREE.DataTexture3D(rawVolumeData, sliceWidth, sliceHeight, imageSlicesData.length);
+                newVolumeTexture.format = THREE.RedFormat; newVolumeTexture.type = THREE.UnsignedByteType;
+                newVolumeTexture.minFilter = THREE.LinearFilter; newVolumeTexture.magFilter = THREE.LinearFilter;
+                newVolumeTexture.unpackAlignment = 1; newVolumeTexture.needsUpdate = true;
+
+                const sortedUniqueLabels = Array.from(currentLabels).sort((a, b) => a - b);
+                const defaultColors = generateDefaultColors(MAX_LABELS);
+                // Reset labelSettings for new dataset, but preserve existing if IDs match? 
+                // For now, let's re-initialize based on new data to keep it simple.
+                const newLabelSettings = {};
+                sortedUniqueLabels.forEach(labelId => {
+                    if (labelId > 0 && labelId < MAX_LABELS) {
+                        newLabelSettings[labelId] = {
+                            id: labelId,
+                            name: `Label ${labelId}`, // Name is not editable, just for internal use
+                            color: (labelSettings[labelId] && labelSettings[labelId].color) ? labelSettings[labelId].color.clone() : (defaultColors[labelId] ? defaultColors[labelId].clone() : new THREE.Color(0.5,0.5,0.5)),
+                            opacity: (labelSettings[labelId] && typeof labelSettings[labelId].opacity !== 'undefined') ? labelSettings[labelId].opacity : 1.0
+                        };
+                    } else if (labelId >= MAX_LABELS) {
+                        console.warn(`Label ${labelId} exceeds MAX_LABELS. Not displayed/controlled.`);
+                    }
+                });
+                labelSettings = newLabelSettings; // Replace with new settings
+                
+                updateShaderUniformsFromLabelSettings();
+                updateVolumeShader(newVolumeTexture);
+                updateLabelControlsGUI();
+                fitCameraToVolume();
+
+            } catch (error) {
+                console.error("Error loading/processing images:", error);
+                showError(`Image processing error: ${error.message}. Check console.`);
+            } finally {
+                loadingIndicator.style.display = 'none';
+            }
+        }
+
+        function fitCameraToVolume() {
+            if (!volumeMesh || !volumeMesh.visible) return;
+            const boundingBox = new THREE.Box3().setFromObject(volumeMesh);
+            const center = new THREE.Vector3(); boundingBox.getCenter(center);
+            const size = new THREE.Vector3(); boundingBox.getSize(size);
+            const maxDim = Math.max(size.x, size.y, size.z);
+            const fov = camera.fov * (Math.PI / 180);
+            let cameraDist = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+            cameraDist *= 1.5; 
+            camera.position.set(center.x, center.y, center.z + cameraDist);
+            camera.lookAt(center);
+            controls.target.copy(center); controls.update();
+        }
+        
+        function setupVolumeMesh() {
+            const geometry = new THREE.BoxGeometry(1, 1, 1);
+            volumeMaterial = new THREE.ShaderMaterial({
+                uniforms: {
+                    uVolumeTexture: { value: null },
+                    uVolumeDimensions: { value: new THREE.Vector3(1, 1, 1) },
+                    uCameraPosition: { value: camera.position },
+                    uInverseProjectionMatrix: { value: camera.projectionMatrixInverse },
+                    uInverseViewMatrix: { value: camera.matrixWorld },
+                    uObjectOpacities: { value: objectOpacitiesUniform },
+                    uLabelColors: { value: labelColorsUniform },
+                    uMaxLabels: { value: MAX_LABELS },
+                    uRaymarchSteps: { value: RAYMARCH_STEPS },
+                    uResolution: { value: new THREE.Vector2(canvasHost.clientWidth, canvasHost.clientHeight) }
+                },
+                vertexShader: `
+                    varying vec3 vWorldPosition; varying vec3 vLocalPosition;
+                    void main() {
+                        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                        vWorldPosition = worldPosition.xyz; vLocalPosition = position;
+                        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+                    }
+                `,
+                fragmentShader: `
+                    precision highp float; precision highp sampler3D;
+                    varying vec3 vWorldPosition; varying vec3 vLocalPosition;
+                    uniform sampler3D uVolumeTexture; uniform vec3 uVolumeDimensions;
+                    uniform vec3 uCameraPosition;
+                    uniform float uObjectOpacities[${MAX_LABELS}];
+                    uniform vec3 uLabelColors[${MAX_LABELS}];
+                    uniform int uMaxLabels; uniform int uRaymarchSteps;
+                    vec3 localToTexCoord(vec3 localPos) { return localPos + 0.5; }
+                    void main() {
+                        vec3 rayOriginWorld = uCameraPosition;
+                        vec3 rayDirectionWorld = normalize(vWorldPosition - uCameraPosition);
+                        vec3 rayOriginLocal = vLocalPosition; vec3 rayDirLocal = rayDirectionWorld;
+                        vec3 invLocalDir = 1.0 / rayDirLocal;
+                        vec3 tNearVec = (vec3(-0.5) - rayOriginLocal) * invLocalDir;
+                        vec3 tFarVec = (vec3(0.5) - rayOriginLocal) * invLocalDir;
+                        vec3 tmin = min(tNearVec, tFarVec); vec3 tmax = max(tNearVec, tFarVec);
+                        float tHitNear = max(max(tmin.x, tmin.y), tmin.z);
+                        float tHitFar = min(min(tmax.x, tmax.y), tmax.z);
+                        if (tHitNear >= tHitFar || tHitFar < 0.0) discard;
+                        tHitNear = max(tHitNear, 0.0);
+                        vec4 accumulatedColor = vec4(0.0);
+                        float stepSize = (tHitFar - tHitNear) / float(uRaymarchSteps);
+                        vec3 currentPosLocal = rayOriginLocal + rayDirLocal * tHitNear;
+                        for (int i = 0; i < uRaymarchSteps; ++i) {
+                            if (accumulatedColor.a > 0.99) break;
+                            vec3 texCoord = localToTexCoord(currentPosLocal);
+                            if (all(greaterThanEqual(texCoord, vec3(0.0))) && all(lessThanEqual(texCoord, vec3(1.0)))) {
+                                float labelFloat = texture(uVolumeTexture, texCoord).r * 255.0;
+                                int label = int(round(labelFloat));
+                                if (label > 0 && label < uMaxLabels) {
+                                    float opacity = uObjectOpacities[label];
+                                    if (opacity > 0.001) {
+                                        vec3 objectColor = uLabelColors[label];
+                                        float alpha = opacity * (1.0 / float(uRaymarchSteps)) * 20.0;
+                                        alpha = clamp(alpha, 0.0, 1.0);
+                                        accumulatedColor.rgb += objectColor * alpha * (1.0 - accumulatedColor.a);
+                                        accumulatedColor.a += alpha * (1.0 - accumulatedColor.a);
+                                    }
+                                }
+                            }
+                            currentPosLocal += rayDirLocal * stepSize;
+                            // A more robust check for exiting the cube along the ray
+                            if (dot(currentPosLocal - (rayOriginLocal + rayDirLocal * tHitFar), rayDirLocal) > 0.0 && i < uRaymarchSteps -1) break;
+                        }
+                        if (accumulatedColor.a == 0.0) discard;
+                        gl_FragColor = accumulatedColor;
+                    }
+                `,
+                side: THREE.FrontSide, transparent: true, depthWrite: false
+            });
+            volumeMesh = new THREE.Mesh(geometry, volumeMaterial);
+            scene.add(volumeMesh);
+        }
+        
+        function updateVolumeShader(newTexture) {
+            if (!volumeMaterial) return;
+            if (newTexture) {
+                if (volumeMaterial.uniforms.uVolumeTexture.value) {
+                    volumeMaterial.uniforms.uVolumeTexture.value.dispose();
+                }
+                volumeMaterial.uniforms.uVolumeTexture.value = newTexture;
+            }
+            volumeMaterial.uniforms.uVolumeDimensions.value.copy(volumeDimensions);
+            const maxDim = Math.max(volumeDimensions.x, volumeDimensions.y, volumeDimensions.z);
+            if (maxDim > 0) {
+                 volumeMesh.scale.set(volumeDimensions.x / maxDim, volumeDimensions.y / maxDim, volumeDimensions.z / maxDim);
+            } else { volumeMesh.scale.set(1,1,1); }
+            volumeMesh.visible = !!volumeMaterial.uniforms.uVolumeTexture.value;
+        }
+
+        function updateShaderUniformsFromLabelSettings() {
+            objectOpacitiesUniform.fill(0.0);
+            for(let i=0; i<MAX_LABELS*3; ++i) labelColorsUniform[i] = 0.0;
+            Object.values(labelSettings).forEach(setting => {
+                if (setting.id > 0 && setting.id < MAX_LABELS) {
+                    objectOpacitiesUniform[setting.id] = setting.opacity;
+                    labelColorsUniform[setting.id * 3] = setting.color.r;
+                    labelColorsUniform[setting.id * 3 + 1] = setting.color.g;
+                    labelColorsUniform[setting.id * 3 + 2] = setting.color.b;
+                }
+            });
+            objectOpacitiesUniform[0] = 0.0;
+            labelColorsUniform[0] = 0.0; labelColorsUniform[1] = 0.0; labelColorsUniform[2] = 0.0;
+            if (volumeMaterial) {
+                volumeMaterial.uniforms.uObjectOpacities.needsUpdate = true;
+                volumeMaterial.uniforms.uLabelColors.needsUpdate = true;
+            }
+        }
+
+        function updateLabelControlsGUI() {
+            labelControlsContainer.innerHTML = '';
+            const activeLabels = Object.values(labelSettings).filter(s => s.id > 0 && s.id < MAX_LABELS).sort((a,b) => a.id - b.id);
+
+            if (activeLabels.length === 0) {
+                labelControlsContainer.innerHTML = '<p class="text-sm text-gray-400">No controllable labels loaded.</p>';
+                return;
+            }
+
+            activeLabels.forEach(setting => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'label-control-item';
+
+                const controlsRow = document.createElement('div'); // New row for inline controls
+                controlsRow.className = 'label-controls-row';
+
+                const idColorGroup = document.createElement('div'); // Group for ID and color
+                idColorGroup.className = 'label-id-color-group';
+
+                const header = document.createElement('div');
+                header.className = 'label-item-header'; // Will be "Label ID: X"
+                header.textContent = `ID ${setting.id}:`; // Shortened
+                idColorGroup.appendChild(header);
+
+                // Color picker (made smaller via CSS)
+                const colorInput = document.createElement('input');
+                colorInput.type = 'color';
+                colorInput.value = '#' + setting.color.getHexString();
+                colorInput.oninput = (e) => {
+                    setting.color.set(e.target.value);
+                    updateShaderUniformsFromLabelSettings();
+                };
+                idColorGroup.appendChild(colorInput);
+                controlsRow.appendChild(idColorGroup);
+                
+                // Opacity slider
+                const sliderContainer = document.createElement('div');
+                sliderContainer.className = 'slider-container';
+                // const opacityLabel = document.createElement('span'); // Optional: if you want "Opacity:" text
+                // opacityLabel.textContent = 'Op:'; opacityLabel.className = 'text-xs mr-1';
+                // sliderContainer.appendChild(opacityLabel);
+
+                const slider = document.createElement('input');
+                slider.type = 'range'; slider.min = '0'; slider.max = '1'; slider.step = '0.01';
+                slider.value = setting.opacity.toString();
+                slider.className = 'slider';
+                const valueDisplay = document.createElement('span');
+                valueDisplay.className = 'slider-value';
+                valueDisplay.textContent = parseFloat(slider.value).toFixed(2);
+                slider.oninput = (e) => {
+                    setting.opacity = parseFloat(e.target.value);
+                    valueDisplay.textContent = parseFloat(e.target.value).toFixed(2);
+                    updateShaderUniformsFromLabelSettings();
+                };
+                sliderContainer.appendChild(slider); 
+                sliderContainer.appendChild(valueDisplay);
+                controlsRow.appendChild(sliderContainer);
+
+                itemDiv.appendChild(controlsRow);
+                labelControlsContainer.appendChild(itemDiv);
+            });
+        }
+        
+        function generateDefaultColors(count) {
+            const colors = [new THREE.Color(0,0,0)];
+            const baseColorsHex = [
+                "#FF0000", "#00FF00", "#0000FF", "#FFFF00", "#00FFFF", "#FF00FF",
+                "#FFA500", "#008000", "#800080", "#FFC0CB", "#ADD8E6", "#A52A2A",
+                "#808080", "#F0E68C", "#E6E6FA", "#FFD700"
+            ];
+             for (let i = 1; i < count; i++) {
+                if (i-1 < baseColorsHex.length) {
+                    colors.push(new THREE.Color(baseColorsHex[i-1]));
+                } else { 
+                    colors.push(new THREE.Color(Math.random()*0.7+0.2, Math.random()*0.7+0.2, Math.random()*0.7+0.2));
+                }
+            }
+            return colors;
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            if (volumeMaterial && volumeMesh.visible) {
+                volumeMaterial.uniforms.uCameraPosition.value.copy(camera.position);
+                volumeMaterial.uniforms.uInverseViewMatrix.value.copy(camera.matrixWorld); 
+                volumeMaterial.uniforms.uInverseProjectionMatrix.value.copy(camera.projectionMatrixInverse);
+            }
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            const newWidth = canvasHost.clientWidth;
+            const newHeight = canvasHost.clientHeight;
+            if (newWidth === 0 || newHeight === 0) return;
+            camera.aspect = newWidth / newHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(newWidth, newHeight);
+            if (volumeMaterial) {
+                 volumeMaterial.uniforms.uResolution.value.set(newWidth, newHeight);
+            }
+        }
+        init();
+    </script>
+</body>
+</html>
