@@ -1,0 +1,688 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Multi-Stage Processing Game</title>
+    <style>
+        /* Basic body styling to center the canvas */
+        body {
+            margin: 0;
+            overflow: hidden; /* Prevent scrollbars */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            background-color: #222;
+            font-family: 'Inter', sans-serif; /* Using Inter font */
+            color: #eee;
+        }
+
+        /* Canvas styling to make it responsive and visually appealing */
+        canvas {
+            background-color: #333;
+            display: block;
+            border: 4px solid #555;
+            box-shadow: 0 0 20px rgba(0, 0, 0, 0.5);
+            border-radius: 12px; /* Rounded corners for the canvas */
+            max-width: 90vw; /* Max width relative to viewport */
+            max-height: 90vh; /* Max height relative to viewport */
+        }
+
+        /* Game instructions and UI */
+        .game-info {
+            position: absolute;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 1.1em;
+            text-align: center;
+            z-index: 10;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .game-info span {
+            font-weight: bold;
+            color: #aaffaa;
+        }
+
+        .score-display {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.6);
+            padding: 10px 15px;
+            border-radius: 8px;
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #ffda6a;
+            z-index: 10;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.3);
+        }
+
+        /* Responsive adjustments for smaller screens */
+        @media (max-width: 768px) {
+            .game-info {
+                font-size: 0.9em;
+                padding: 8px 15px;
+                top: 10px;
+            }
+            .score-display {
+                font-size: 1em;
+                padding: 8px 12px;
+                top: 10px;
+                right: 10px;
+            }
+            canvas {
+                border-width: 2px;
+                border-radius: 8px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .game-info {
+                font-size: 0.8em;
+                padding: 5px 10px;
+                top: 5px;
+            }
+            .score-display {
+                font-size: 0.9em;
+                padding: 5px 10px;
+                top: 5px;
+                right: 5px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="game-info">
+        <p>Use <span>Arrow Keys</span> to move.</p>
+        <p>Press <span>Space</span> to pick up/put down the object.</p>
+        <p>Stay in area for manual processing.</p>
+    </div>
+    <div id="scoreDisplay" class="score-display">Score: 0</div>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        // Get the canvas element and its 2D rendering context
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const scoreDisplay = document.getElementById('scoreDisplay');
+
+        // --- Game Configuration ---
+        const GAME_WIDTH = 1500; // Increased game world width for more space
+        const GAME_HEIGHT = 1000; // Increased game world height
+        const PLAYER_SIZE = 40;
+        const OBJECT_SIZE = 30;
+        const PLAYER_SPEED = 5;
+        const CAMERA_LERP_FACTOR = 0.1; // How smoothly the camera follows (0 to 1)
+        const PICKUP_DISTANCE_SQ = (PLAYER_SIZE / 2 + OBJECT_SIZE / 2 + 10) ** 2; // Squared distance for pickup
+
+        // --- Object States and Colors ---
+        const OBJECT_STATE = {
+            INITIAL: 'initial',      // Round, Green
+            FIXED: 'fixed',          // Round, Orange (from Post fixation)
+            BAKED: 'baked',          // Round, Red (from Oven)
+            CUT: 'cut',              // Square, Red (from Ultramicrotomy)
+            // DELETED: 'deleted' // Objects are removed from array when deleted
+        };
+
+        const OBJECT_COLORS = {
+            [OBJECT_STATE.INITIAL]: '#28a745',  // Green
+            [OBJECT_STATE.FIXED]: '#fd7e14',    // Orange
+            [OBJECT_STATE.BAKED]: '#dc3545',    // Red
+            [OBJECT_STATE.CUT]: '#dc3545'       // Red (same as baked for cut state)
+        };
+
+        const OBJECT_SHAPES = {
+            [OBJECT_STATE.INITIAL]: 'circle',
+            [OBJECT_STATE.FIXED]: 'circle',
+            [OBJECT_STATE.BAKED]: 'circle',
+            [OBJECT_STATE.CUT]: 'square'
+        };
+
+        // --- Area Configurations ---
+        const AREAS = {
+            AREA1_POST_FIXATION: {
+                name: 'Post fixation',
+                x: GAME_WIDTH - 300, y: 50, width: 250, height: 200,
+                color: '#6c757d', // Grey
+                textColor: '#eee',
+                duration: 3000,
+                inputState: OBJECT_STATE.INITIAL,
+                outputState: OBJECT_STATE.FIXED,
+                progressBarColor: '#007bff', // Blue
+                playerRequired: true, // Player must stay in area
+                notes: 'Processes to Orange'
+            },
+            AREA2_OVEN: {
+                name: 'Oven',
+                x: GAME_WIDTH - 300, y: 300, width: 250, height: 200,
+                color: '#495057', // Darker Grey
+                textColor: '#eee',
+                duration: 4000,
+                inputState: OBJECT_STATE.FIXED,
+                outputState: OBJECT_STATE.BAKED,
+                progressBarColor: '#ffc107', // Yellow
+                playerRequired: false, // Automatic processing
+                notes: 'Processes to Red (Automatic)'
+            },
+            AREA3_ULTRAMICROTOMY: {
+                name: 'Ultramicrotomy',
+                x: 50, y: 50, width: 250, height: 200,
+                color: '#6c757d',
+                textColor: '#eee',
+                duration: 3500,
+                inputState: OBJECT_STATE.BAKED,
+                outputState: OBJECT_STATE.CUT,
+                progressBarColor: '#17a2b8', // Cyan
+                playerRequired: true,
+                notes: 'Processes to Square Shape'
+            },
+            AREA4_2D_SEM: {
+                name: '2D SEM',
+                x: 50, y: 300, width: 250, height: 200,
+                color: '#495057',
+                textColor: '#eee',
+                duration: 2000,
+                inputState: OBJECT_STATE.CUT,
+                outputState: null, // Object is deleted
+                progressBarColor: '#28a745', // Green
+                playerRequired: true,
+                score: 1, // Points gained
+                notes: 'Deletes Object (+1 Point)'
+            },
+            AREA5_SBF_SEM: {
+                name: 'SBF-SEM',
+                x: GAME_WIDTH / 2 - 125, y: GAME_HEIGHT - 250, width: 250, height: 200,
+                color: '#6c757d',
+                textColor: '#eee',
+                duration: 8000, // Long processing time
+                inputState: OBJECT_STATE.BAKED,
+                outputState: null, // Object is deleted
+                progressBarColor: '#6f42c1', // Purple
+                playerRequired: false,
+                score: 1,
+                notes: 'Deletes Object (+1 Point, Long)'
+            },
+            AREA6_MAIL: { // New Mail Area
+                name: 'Mail',
+                x: 50, y: 550, width: 250, height: 200, // Positioned below Ultramicrotomy
+                color: '#8b4513', // Brown for a mail area
+                textColor: '#eee',
+                notes: 'Collect mail here!'
+            }
+        };
+
+
+        // --- Game State Variables ---
+        let player = {
+            x: GAME_WIDTH / 2,
+            y: GAME_HEIGHT / 2,
+            dx: 0, // Delta x for movement
+            dy: 0, // Delta y for movement
+            isCarrying: false,
+            carriedObjectIndex: -1, // Index of the object being carried
+            color: '#007bff', // Blue
+            outlineColor: '#0056b3'
+        };
+
+        let objects = []; // Array to hold multiple objects
+
+        // Initial objects placement
+        const initialObjectPositions = [
+            { x: GAME_WIDTH / 2 - 200, y: GAME_HEIGHT / 2 - 150 },
+            { x: GAME_WIDTH / 2 + 200, y: GAME_HEIGHT / 2 - 150 },
+            { x: GAME_WIDTH / 2 - 100, y: GAME_HEIGHT / 2 + 100 },
+            { x: GAME_WIDTH / 2 + 100, y: GAME_HEIGHT / 2 + 100 }
+        ];
+
+        // Create initial objects
+        initialObjectPositions.forEach(pos => {
+            objects.push({
+                x: pos.x,
+                y: pos.y,
+                state: OBJECT_STATE.INITIAL, // Initial state
+                isProcessing: false,
+                processingArea: null, // Which area it's processing in
+                processingStartTime: 0,
+                processingProgress: 0, // 0-100%
+                outlineColor: '#aaa'
+            });
+        });
+
+        let score = 0;
+
+        // Object to keep track of currently pressed keys
+        const keysPressed = {};
+
+        // Camera position (top-left corner of the camera's view in world coordinates)
+        let cameraX = 0;
+        let cameraY = 0;
+
+        // Mail system variables
+        let mailCount = 0;
+        const MAIL_GENERATION_INTERVAL = 10000; // 10 seconds to generate a new mail
+        const MAIL_CONSUMPTION_INTERVAL = 2000; // 2 seconds to consume a mail when player is in area
+        let mailConsumptionTimer = null; // Interval ID for mail consumption
+
+        // --- Helper Functions ---
+
+        /**
+         * Checks if the player's bounding box intersects with an area's bounding box.
+         * @param {object} player The player object.
+         * @param {object} area The area object (from AREAS constants).
+         * @returns {boolean} True if player is within the area, false otherwise.
+         */
+        function isPlayerInArea(player, area) {
+            const playerLeft = player.x - PLAYER_SIZE / 2;
+            const playerRight = player.x + PLAYER_SIZE / 2;
+            const playerTop = player.y - PLAYER_SIZE / 2;
+            const playerBottom = player.y + PLAYER_SIZE / 2;
+
+            const areaLeft = area.x;
+            const areaRight = area.x + area.width;
+            const areaTop = area.y;
+            const areaBottom = area.y + area.height;
+
+            return playerRight > areaLeft && playerLeft < areaRight &&
+                   playerBottom > areaTop && playerTop < areaBottom;
+        }
+
+        // --- Event Listeners for Input ---
+        window.addEventListener('keydown', (e) => {
+            keysPressed[e.code] = true;
+            // Prevent default action for arrow keys and space to stop scrolling
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) {
+                e.preventDefault();
+            }
+        });
+
+        window.addEventListener('keyup', (e) => {
+            keysPressed[e.code] = false;
+        });
+
+        // Handle space key for picking up/putting down an object
+        window.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                e.preventDefault(); // Prevent page scrolling
+
+                if (player.isCarrying) {
+                    // --- Drop the object ---
+                    const carriedObject = objects[player.carriedObjectIndex];
+                    if (!carriedObject) return; // Should not happen
+
+                    player.isCarrying = false;
+                    player.carriedObjectIndex = -1;
+
+                    // Calculate the potential drop point (center of the object if placed below player)
+                    const potentialDropX = player.x;
+                    const potentialDropY = player.y + PLAYER_SIZE / 2 + OBJECT_SIZE / 2 + 5;
+
+                    let droppedInArea = false;
+
+                    // Check if dropped in any processing area (skip mail area for object processing)
+                    for (const areaKey in AREAS) {
+                        if (areaKey === 'AREA6_MAIL') continue; // Mail area does not process objects
+
+                        const area = AREAS[areaKey];
+                        const areaLeft = area.x;
+                        const areaRight = area.x + area.width;
+                        const areaTop = area.y;
+                        const areaBottom = area.y + area.height;
+
+                        if (potentialDropX >= areaLeft && potentialDropX <= areaRight &&
+                            potentialDropY >= areaTop && potentialDropY <= areaBottom) {
+
+                            // Check if the object's current state matches the area's input requirement
+                            if (carriedObject.state === area.inputState) {
+                                // Object is dropped in a valid processing area
+                                // Clamp object position within the area, using the potential drop point
+                                carriedObject.x = Math.max(area.x + OBJECT_SIZE / 2, Math.min(area.x + area.width - OBJECT_SIZE / 2, potentialDropX));
+                                carriedObject.y = Math.max(area.y + OBJECT_SIZE / 2, Math.min(area.y + area.height - OBJECT_SIZE / 2, potentialDropY));
+
+                                carriedObject.isProcessing = true;
+                                carriedObject.processingArea = areaKey; // Store which area it's in
+                                carriedObject.processingStartTime = performance.now();
+                                carriedObject.processingProgress = 0; // Reset progress
+
+                                droppedInArea = true;
+                                break; // Found an area, exit loop
+                            }
+                        }
+                    }
+
+                    if (!droppedInArea) {
+                        // Normal drop outside any valid processing area
+                        carriedObject.x = potentialDropX;
+                        carriedObject.y = potentialDropY;
+                        // If it was processing before, stop it and reset its progress
+                        carriedObject.isProcessing = false;
+                        carriedObject.processingArea = null;
+                        carriedObject.processingProgress = 0;
+                    }
+
+                } else {
+                    // --- Try to pick up an object ---
+                    let closestObject = null;
+                    let minDistanceSq = Infinity;
+                    let closestObjectIndex = -1;
+
+                    // Find the closest non-processing object
+                    objects.forEach((obj, index) => {
+                        if (!obj.isProcessing) { // Can only pick up non-processing objects
+                            const distSq = (player.x - obj.x) ** 2 + (player.y - obj.y) ** 2;
+                            if (distSq < PICKUP_DISTANCE_SQ && distSq < minDistanceSq) {
+                                minDistanceSq = distSq;
+                                closestObject = obj;
+                                closestObjectIndex = index;
+                            }
+                        }
+                    });
+
+                    if (closestObject) {
+                        player.isCarrying = true;
+                        player.carriedObjectIndex = closestObjectIndex;
+                    }
+                }
+            }
+        });
+
+        // --- Game Initialization and Resizing ---
+        /**
+         * Resizes the canvas to fit the window and maintains aspect ratio.
+         * Sets the internal canvas resolution for drawing.
+         */
+        function resizeCanvas() {
+            const desiredRatio = GAME_WIDTH / GAME_HEIGHT;
+            let newWidth = window.innerWidth * 0.9; // 90% of window width
+            let newHeight = window.innerHeight * 0.9; // 90% of window height
+
+            const currentRatio = newWidth / newHeight;
+
+            if (currentRatio > desiredRatio) {
+                // Window is wider than desired, cap by height
+                newWidth = newHeight * desiredRatio;
+            } else {
+                // Window is taller than desired, cap by width
+                newHeight = newWidth / desiredRatio;
+            }
+
+            canvas.style.width = `${newWidth}px`;
+            canvas.style.height = `${newHeight}px`;
+
+            // Set the actual drawing buffer size (internal resolution)
+            // Using GAME_WIDTH/GAME_HEIGHT ensures consistent drawing quality regardless of display size
+            canvas.width = GAME_WIDTH;
+            canvas.height = GAME_HEIGHT;
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+        window.onload = function() {
+            resizeCanvas(); // Initial canvas resize on load
+            animate(); // Start the game loop
+
+            // Start generating mail
+            setInterval(() => {
+                mailCount++;
+            }, MAIL_GENERATION_INTERVAL);
+        };
+
+        // --- Game Loop Functions ---
+
+        /**
+         * Updates the game state, including player movement, camera position, and object states.
+         */
+        function update() {
+            // Reset player movement
+            player.dx = 0;
+            player.dy = 0;
+
+            // Handle player movement based on pressed keys
+            if (keysPressed['ArrowUp']) { player.dy = -PLAYER_SPEED; }
+            if (keysPressed['ArrowDown']) { player.dy = PLAYER_SPEED; }
+            if (keysPressed['ArrowLeft']) { player.dx = -PLAYER_SPEED; }
+            if (keysPressed['ArrowRight']) { player.dx = PLAYER_SPEED; }
+
+            // Normalize diagonal movement speed to prevent faster diagonal movement
+            if (player.dx !== 0 && player.dy !== 0) {
+                const diagonalSpeed = PLAYER_SPEED / Math.sqrt(2);
+                player.dx = player.dx > 0 ? diagonalSpeed : -diagonalSpeed;
+                player.dy = player.dy > 0 ? diagonalSpeed : -diagonalSpeed;
+            }
+
+            // Update player position, clamping to game world boundaries
+            player.x += player.dx;
+            player.y += player.dy;
+
+            // Clamp player position to stay within the game world bounds
+            player.x = Math.max(PLAYER_SIZE / 2, Math.min(GAME_WIDTH - PLAYER_SIZE / 2, player.x));
+            player.y = Math.max(PLAYER_SIZE / 2, Math.min(GAME_HEIGHT - PLAYER_SIZE / 2, player.y));
+
+            // If player is carrying an object, update object's position to follow the player
+            if (player.isCarrying && player.carriedObjectIndex !== -1) {
+                const carriedObject = objects[player.carriedObjectIndex];
+                carriedObject.x = player.x;
+                carriedObject.y = player.y - (PLAYER_SIZE / 2) - (OBJECT_SIZE / 2) - 5;
+            }
+
+            // Iterate through all objects to handle their processing states
+            for (let i = objects.length - 1; i >= 0; i--) {
+                const obj = objects[i];
+
+                if (obj.isProcessing) {
+                    const area = AREAS[obj.processingArea];
+                    if (!area) continue; // Should not happen if processingArea is set correctly
+
+                    let shouldProcess = true;
+
+                    // If player is required for processing, check if player is in the area
+                    if (area.playerRequired) {
+                        if (!isPlayerInArea(player, area)) {
+                            // Player is not in the area, processing completely stops.
+                            // To effectively "stop" processing, we do nothing to the progress
+                            // and the `elapsedTime` calculation on the next frame will pick up
+                            // from where it left off, based on `processingStartTime`.
+                            shouldProcess = false;
+                        }
+                    }
+
+                    if (shouldProcess) {
+                        const elapsedTime = performance.now() - obj.processingStartTime;
+                        obj.processingProgress = (elapsedTime / area.duration) * 100;
+
+                        if (obj.processingProgress >= 100) {
+                            // Processing completed
+                            obj.isProcessing = false;
+                            obj.processingArea = null;
+                            obj.processingProgress = 0;
+
+                            if (area.outputState) {
+                                // Object transitions to a new state
+                                obj.state = area.outputState;
+                            } else {
+                                // Object is deleted (e.g., Area 4 & 5)
+                                if (area.score) {
+                                    score += area.score;
+                                    scoreDisplay.textContent = `Score: ${score}`;
+                                }
+                                objects.splice(i, 1); // Remove the object from the array
+                                continue; // Skip to next object as this one is removed
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Handle mail consumption
+            const mailArea = AREAS.AREA6_MAIL;
+            if (isPlayerInArea(player, mailArea)) {
+                if (mailConsumptionTimer === null && mailCount > 0) {
+                    // Start consumption timer if player enters area and there's mail
+                    mailConsumptionTimer = setInterval(() => {
+                        if (mailCount > 0) {
+                            mailCount--;
+                        } else {
+                            // Stop timer if no more mail
+                            clearInterval(mailConsumptionTimer);
+                            mailConsumptionTimer = null;
+                        }
+                    }, MAIL_CONSUMPTION_INTERVAL);
+                }
+            } else {
+                // If player leaves mail area, stop consumption timer
+                if (mailConsumptionTimer !== null) {
+                    clearInterval(mailConsumptionTimer);
+                    mailConsumptionTimer = null;
+                }
+            }
+
+            // Calculate target camera position (center of screen relative to player)
+            const targetCameraX = player.x - canvas.width / 2;
+            const targetCameraY = player.y - canvas.height / 2;
+
+            // Smoothly interpolate camera towards target position for a less jerky follow
+            cameraX += (targetCameraX - cameraX) * CAMERA_LERP_FACTOR;
+            cameraY += (targetCameraY - cameraY) * CAMERA_LERP_FACTOR;
+
+            // Clamp camera to game world boundaries to prevent looking outside the world
+            cameraX = Math.max(0, Math.min(GAME_WIDTH - canvas.width, cameraX));
+            cameraY = Math.max(0, Math.min(GAME_HEIGHT - canvas.height, cameraY));
+        }
+
+        /**
+         * Renders all game elements onto the canvas.
+         * Applies camera translation before drawing world elements.
+         */
+        function draw() {
+            // Clear the canvas for the new frame
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // Save the current canvas transformation state
+            ctx.save();
+
+            // Apply camera transformation: translate the canvas opposite to camera position
+            // This makes it seem like the camera is moving around the world, but elements are drawn relative to the camera's view
+            ctx.translate(-cameraX, -cameraY);
+
+            // --- Draw Game World Elements ---
+
+            // Draw a grid to visualize camera movement and world boundaries
+            ctx.strokeStyle = '#555';
+            ctx.lineWidth = 1;
+            const gridSize = 50;
+            for (let x = 0; x < GAME_WIDTH; x += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, GAME_HEIGHT);
+                ctx.stroke();
+            }
+            for (let y = 0; y < GAME_HEIGHT; y += gridSize) {
+                ctx.beginPath();
+                ctx.moveTo(0, y);
+                ctx.lineTo(GAME_WIDTH, y);
+                ctx.stroke();
+            }
+
+            // Draw all processing areas
+            for (const areaKey in AREAS) {
+                const area = AREAS[areaKey];
+                ctx.fillStyle = area.color;
+                ctx.strokeStyle = '#343a40';
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+                ctx.roundRect(area.x, area.y, area.width, area.height, 15);
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = area.textColor;
+                ctx.font = '20px Inter';
+                ctx.textAlign = 'center';
+                ctx.fillText(area.name, area.x + area.width / 2, area.y + area.height / 2 - 15);
+                ctx.font = '16px Inter';
+                ctx.fillText(area.notes, area.x + area.width / 2, area.y + area.height / 2 + 10);
+
+                // For the Mail area, display the count
+                if (areaKey === 'AREA6_MAIL') {
+                    ctx.font = '24px Inter';
+                    ctx.fillStyle = '#ffda6a'; // Yellow color for mail count
+                    ctx.fillText(`Mail: ${mailCount}`, area.x + area.width / 2, area.y + area.height / 2 + 50);
+                }
+            }
+
+            // Draw all objects
+            objects.forEach(obj => {
+                ctx.fillStyle = OBJECT_COLORS[obj.state]; // Get color based on object's state
+                ctx.strokeStyle = obj.outlineColor;
+                ctx.lineWidth = 3;
+                ctx.beginPath();
+
+                const shape = OBJECT_SHAPES[obj.state]; // Get shape based on object's state
+                if (shape === 'circle') {
+                    ctx.arc(obj.x, obj.y, OBJECT_SIZE / 2, 0, Math.PI * 2);
+                } else if (shape === 'square') {
+                    ctx.roundRect(obj.x - OBJECT_SIZE / 2, obj.y - OBJECT_SIZE / 2, OBJECT_SIZE, OBJECT_SIZE, 8);
+                }
+                ctx.fill();
+                ctx.stroke();
+
+                // Draw progress bar if object is currently processing
+                if (obj.isProcessing) {
+                    const area = AREAS[obj.processingArea];
+                    if (!area) return; // Should not happen
+
+                    const barWidth = OBJECT_SIZE * 1.5;
+                    const barHeight = 8;
+                    const barX = obj.x - barWidth / 2;
+                    const barY = obj.y - OBJECT_SIZE / 2 - barHeight - 5; // Position above the object
+
+                    // Background of progress bar
+                    ctx.fillStyle = '#555';
+                    ctx.beginPath();
+                    ctx.roundRect(barX, barY, barWidth, barHeight, 3);
+                    ctx.fill();
+
+                    // Filled part of progress bar
+                    const currentProgressWidth = (obj.processingProgress / 100) * barWidth;
+                    ctx.fillStyle = area.progressBarColor;
+                    ctx.beginPath();
+                    ctx.roundRect(barX, barY, currentProgressWidth, barHeight, 3);
+                    ctx.fill();
+                }
+            });
+
+
+            // Draw the player
+            ctx.fillStyle = player.color;
+            ctx.strokeStyle = player.outlineColor;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.roundRect(player.x - PLAYER_SIZE / 2, player.y - PLAYER_SIZE / 2, PLAYER_SIZE, PLAYER_SIZE, 10); /* Rounded corners */
+            ctx.fill();
+            ctx.stroke();
+
+            // Restore the canvas transformation state (remove camera translation)
+            ctx.restore();
+        }
+
+        /**
+         * The main game animation loop.
+         * Calls update to modify game state and draw to render it.
+         */
+        function animate() {
+            update(); // Update game logic
+            draw();   // Redraw game elements
+            requestAnimationFrame(animate); // Request the next frame to continue the loop
+        }
+
+        // The animate function is called once after the window loads to start the game loop.
+        // It then continuously calls itself via requestAnimationFrame.
+    </script>
+</body>
+</html>
